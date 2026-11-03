@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: vision
+      POSTGRES_USER: vision
+      POSTGRES_PASSWORD: vision
+    ports:
+      - "5432:5432"
+    volumes:
+      - vision-pg:/var/lib/postgresql/data
+
+volumes:
+  vision-pg:

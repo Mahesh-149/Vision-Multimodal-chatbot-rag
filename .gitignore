@@ -1,0 +1,13 @@
+# Target build directory
+target/
+*.jar
+*.war
+
+# IntelliJ IDEA files
+.idea/
+*.iml
+
+# System & environment files
+.DS_Store
+*.log
+.env

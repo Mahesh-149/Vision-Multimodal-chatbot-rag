@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vision Chat — Multimodal AI</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Inter,Segoe UI,sans-serif;background:radial-gradient(circle at top left,#26204f,transparent 38%),#0b0d13;color:#fff;height:100vh;display:grid;place-items:center}
+    .app{width:min(1000px,96vw);height:94vh;background:#12151eeF;border:1px solid #ffffff18;border-radius:22px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 80px #0008}
+    header{padding:18px 24px;border-bottom:1px solid #ffffff15;display:flex;justify-content:space-between;align-items:center}
+    header p,.hint{color:#9298aa;font-size:12px;margin-top:4px}
+    button{cursor:pointer;border:0;color:white;border-radius:10px;padding:10px 14px;background:#6254df}
+    .clear{background:#ffffff12;border:1px solid #ffffff20}
+    #chat{flex:1;overflow:auto;padding:26px}
+    .welcome{text-align:center;margin:65px auto;max-width:600px;color:#aeb4c5;line-height:1.7}
+    .welcome h1{font-size:28px;color:white;margin-bottom:10px}
+    .row{display:flex;margin:0 0 18px}.row.user{justify-content:flex-end}
+    .bubble{max-width:78%;padding:14px 17px;border-radius:16px;background:#ffffff0d;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55}
+    .user .bubble{background:linear-gradient(135deg,#6956e8,#4d74e7)}
+    .files{font-size:12px;color:#d8d9e5;margin-top:8px}
+    .docs{display:none;flex-wrap:wrap;gap:8px;padding:10px 24px;border-bottom:1px solid #ffffff15;font-size:12px;color:#aeb4c5;align-items:center}
+    .docs.show{display:flex}
+    .chip{display:inline-flex;align-items:center;gap:6px;background:#ffffff10;border:1px solid #ffffff20;border-radius:999px;padding:4px 6px 4px 10px;color:#d8d9e5}
+    .chip button{padding:0 6px;background:transparent;color:#9298aa;font-size:14px;line-height:1}
+    .chip button:hover{color:#fff}
+    .note{font-size:12px;color:#9298aa;margin:-8px 0 18px}
+    .composer-area{padding:14px 20px 18px;background:#0d1018}
+    .selected{font-size:12px;color:#aeb4c5;margin-bottom:8px}
+    .composer{display:flex;gap:10px;align-items:end;background:#ffffff0d;border:1px solid #ffffff20;border-radius:16px;padding:10px}
+    textarea{flex:1;min-height:44px;max-height:140px;resize:vertical;background:transparent;border:0;outline:0;color:white;font:14px inherit;padding:12px}
+    input[type=file]{display:none}
+    .attach{background:#ffffff16}
+    .hint{text-align:center;margin-top:9px}
+    @media(max-width:600px){.app{width:100vw;height:100vh;border-radius:0}#chat{padding:15px}.bubble{max-width:90%}.composer-area{padding:10px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div><strong>✦ Vision Chat</strong><p>Text · Image · PDF · Documents · Audio · Video</p></div>
+    <button class="clear" onclick="clearChat()">Clear chat</button>
+  </header>
+  <div class="docs" id="docs"></div>
+  <main id="chat">
+    <div class="welcome" id="welcome">
+      <h1>Ask me anything</h1>
+      Upload an image, PDF, document, audio recording or video and ask Gemini to analyze it.
+    </div>
+  </main>
+  <section class="composer-area">
+    <div class="selected" id="selectedFiles">No files attached</div>
+    <div class="composer">
+      <input id="fileInput" type="file" multiple
+        accept="image/*,application/pdf,.docx,.txt,.md,.csv,audio/*,video/*"
+        onchange="showSelectedFiles()">
+      <button class="attach" onclick="document.getElementById('fileInput').click()" title="Attach files">📎</button>
+      <textarea id="message" placeholder="Message Vision Chat..." onkeydown="handleKey(event)"></textarea>
+      <button id="send" onclick="sendMessage()">➜</button>
+    </div>
+    <div class="hint">Enter to send · Shift + Enter for a new line · Maximum 20 MB per file</div>
+  </section>
+</div>
+<script>
+  // The conversation id is kept in localStorage so a reload resumes the same
+  // conversation (history and documents live on the server).
+  const sessionId = (() => {
+    try {
+      let id = localStorage.getItem('visionSessionId');
+      if (!id) { id = crypto.randomUUID(); localStorage.setItem('visionSessionId', id); }
+      return id;
+    } catch (e) { return crypto.randomUUID(); }
+  })();
+  const input = document.getElementById('fileInput');
+  const chat = document.getElementById('chat');
+  const WELCOME = '<div class="welcome" id="welcome"><h1>Ask me anything</h1>Upload an image, PDF, document, audio recording or video and ask Gemini to analyze it. Documents you upload are remembered for later questions.</div>';
+  let busy = false;
+
+  function showNote(text) {
+    const note = document.createElement('div'); note.className = 'note'; note.textContent = text;
+    chat.appendChild(note); chat.scrollTop = chat.scrollHeight;
+  }
+  async function loadHistory() {
+    try {
+      const res = await fetch(`/api/chat/history?sessionId=${encodeURIComponent(sessionId)}`);
+      if (!res.ok) return;
+      const messages = await res.json();
+      messages.forEach(m => addBubble(m.text, m.role === 'user' ? 'user' : 'assistant'));
+    } catch (e) { /* the server may be starting; start with an empty chat */ }
+  }
+  async function loadDocuments() {
+    const box = document.getElementById('docs');
+    try {
+      const res = await fetch(`/api/chat/documents?sessionId=${encodeURIComponent(sessionId)}`);
+      if (!res.ok) return;
+      const docs = await res.json();
+      box.replaceChildren();
+      box.classList.toggle('show', docs.length > 0);
+      if (!docs.length) return;
+      const label = document.createElement('span'); label.textContent = 'Searchable documents:';
+      box.appendChild(label);
+      docs.forEach(d => {
+        const chip = document.createElement('span'); chip.className = 'chip';
+        chip.appendChild(document.createTextNode(`${d.filename} (${d.chunks})`));
+        const remove = document.createElement('button');
+        remove.textContent = '×'; remove.title = 'Remove from this conversation';
+        remove.onclick = async () => {
+          await fetch(`/api/chat/documents/${encodeURIComponent(d.documentId)}?sessionId=${encodeURIComponent(sessionId)}`, {method:'DELETE'});
+          loadDocuments();
+        };
+        chip.appendChild(remove); box.appendChild(chip);
+      });
+    } catch (e) { /* non-critical */ }
+  }
+
+  function showSelectedFiles() {
+    document.getElementById('selectedFiles').textContent =
+      [...input.files].map(f => `${f.name} (${(f.size/1024/1024).toFixed(1)} MB)`).join(' · ') || 'No files attached';
+  }
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  }
+  function addBubble(text, who, names=[]) {
+    document.getElementById('welcome')?.remove();
+    const row = document.createElement('div'); row.className = `row ${who}`;
+    const bubble = document.createElement('div'); bubble.className = 'bubble';
+    bubble.textContent = text;
+    if (names.length) {
+      const list = document.createElement('div'); list.className = 'files';
+      list.textContent = '📎 ' + names.join(', '); bubble.appendChild(list);
+    }
+    row.appendChild(bubble); chat.appendChild(row); chat.scrollTop = chat.scrollHeight;
+    return row;
+  }
+  async function sendMessage() {
+    if (busy) return;
+    const message = document.getElementById('message').value.trim();
+    const selected = [...input.files];
+    if (!message && selected.length === 0) return;
+
+    busy = true; document.getElementById('send').disabled = true;
+    addBubble(message || 'Please analyze the attached file(s).', 'user', selected.map(f => f.name));
+    const form = new FormData();
+    form.append('message', message);
+    form.append('sessionId', sessionId);
+    selected.forEach(file => form.append('files', file));
+
+    document.getElementById('message').value = '';
+    input.value = ''; showSelectedFiles();
+    const loading = addBubble('Gemini is analyzing your request…', 'assistant');
+
+    try {
+      const response = await fetch('/api/chat', { method:'POST', body:form });
+      let data = null;
+      try { data = await response.json(); } catch (e) { /* non-JSON error body */ }
+      loading.remove();
+      if (response.ok && data) {
+        addBubble(data.answer, 'assistant');
+        (data.warnings || []).forEach(w => showNote('⚠ ' + w));
+        if (data.indexed && data.indexed.length) {
+          showNote('Indexed for later questions: ' + data.indexed.map(d => d.filename).join(', '));
+          loadDocuments();
+        }
+      } else {
+        addBubble(`Error: ${(data && data.error) || response.statusText || 'request failed'}`, 'assistant');
+      }
+    } catch (e) {
+      loading.remove(); addBubble('Unable to connect to the server.', 'assistant');
+    } finally {
+      busy = false; document.getElementById('send').disabled = false;
+    }
+  }
+  async function clearChat() {
+    if (!confirm('Delete this conversation and all documents indexed for it?')) return;
+    await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`, {method:'DELETE'});
+    chat.innerHTML = WELCOME;
+    loadDocuments();
+  }
+  loadHistory();
+  loadDocuments();
+</script>
+</body>
+</html>
